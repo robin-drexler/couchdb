@@ -10,6 +10,15 @@
 ## License for the specific language governing permissions and limitations under
 ## the License.
 
-SUBDIRS = bench couchdb etap javascript view_server
-EXTRA_DIST = random_port.ini
+noinst_SCRIPTS = run
 
+all:
+	mkdir -p {ebin,temp}
+	chmod +x run
+
+EXTRA_DIST = \
+    run.in
+
+clean-local:
+	rm -rf ebin
+	rm -rf temp
