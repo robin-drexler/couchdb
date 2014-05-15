@@ -16,8 +16,12 @@ all:
 	mkdir -p {ebin,temp}
 	chmod +x run
 
+eunit_files = \
+    couchdb_tests.hrl
+
 EXTRA_DIST = \
-    run.in
+    run.in \
+    $(eunit_files)
 
 clean-local:
 	rm -rf ebin
