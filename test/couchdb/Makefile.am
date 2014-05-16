@@ -17,6 +17,7 @@ all:
 	chmod +x run
 
 eunit_files = \
+    couchdb_modules_load_tests.erl \
     couchdb_tests.hrl
 
 EXTRA_DIST = \
