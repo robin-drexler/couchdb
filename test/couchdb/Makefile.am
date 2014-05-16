@@ -20,6 +20,7 @@ eunit_files = \
     couchdb_modules_load_tests.erl \
     couch_util_tests.erl \
     couch_file_tests.erl \
+    couch_btree_tests.erl \
     couchdb_tests.hrl
 
 EXTRA_DIST = \
