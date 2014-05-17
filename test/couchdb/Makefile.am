@@ -22,6 +22,7 @@ eunit_files = \
     couch_file_tests.erl \
     couch_btree_tests.erl \
     couch_doc_json_tests.erl \
+    couch_uuids_tests.erl \
     couchdb_tests.hrl
 
 EXTRA_DIST = \
