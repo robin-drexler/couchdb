@@ -25,6 +25,7 @@ eunit_files = \
     couch_uuids_tests.erl \
     couch_work_queue_tests.erl \
     couch_stream_tests.erl \
+    couch_key_tree_tests.erl \
     couchdb_tests.hrl
 
 EXTRA_DIST = \
