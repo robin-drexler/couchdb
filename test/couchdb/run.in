@@ -1,6 +1,6 @@
 #!/usr/bin/env escript
 %% -*- erlang -*-
-%%! -DTEST -pa @abs_top_builddir@/test/couchdb/ebin
+%%! -DTEST -env ERL_LIBS @abs_top_builddir@/src:$ERL_LIBS -pa @abs_top_builddir@/test/couchdb/ebin
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License"); you may not
 %% use this file except in compliance with the License. You may obtain a copy of
