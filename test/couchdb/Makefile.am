@@ -29,6 +29,7 @@ eunit_files = \
     couch_key_tree_tests.erl \
     couch_db_tests.erl \
     couchdb_views_tests.erl \
+    couch_changes_tests.erl \
     test_request.erl \
     couchdb_tests.hrl
 
