@@ -30,6 +30,7 @@ eunit_files = \
     couch_db_tests.erl \
     couchdb_views_tests.erl \
     couch_changes_tests.erl \
+    couchdb_update_conflicts_tests.erl \
     test_request.erl \
     couchdb_tests.hrl
 
