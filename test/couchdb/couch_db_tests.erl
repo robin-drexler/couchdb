@@ -14,6 +14,7 @@
 
 -include_lib("couchdb_tests.hrl").
 
+-define(TIMETOUT, 1200000).
 
 setup() ->
     {ok, _} = couch_server_sup:start_link(?CONFIG_CHAIN),
@@ -33,7 +34,8 @@ create_delete_db_test_()->
                 [should_create_db(),
                  should_delete_db(),
                  should_create_multiple_dbs(),
-                 should_delete_multiple_dbs()]
+                 should_delete_multiple_dbs(),
+                 should_create_delete_database_continuously()]
             end
         }
     }.
@@ -88,3 +90,21 @@ should_delete_multiple_dbs() ->
     end, 0, DbNames),
 
     ?_assertEqual(NumDeleted, 6).
+
+should_create_delete_database_continuously() ->
+    DbName = ?tempdb(),
+    {ok, _} = couch_db:create(DbName, []),
+    [{timeout, ?TIMETOUT div 1000, {integer_to_list(N) ++ " times",
+                                    ?_assert(loop(DbName, N))}}
+     || N <- [10, 100, 1000]].
+
+loop(_, 0) ->
+    true;
+loop(DbName, N) ->
+    ok = cycle(DbName),
+    loop(DbName, N - 1).
+
+cycle(DbName) ->
+    ok = couch_server:delete(DbName, []),
+    {ok, _Db} = couch_db:create(DbName, []),
+    ok.
