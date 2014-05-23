@@ -33,6 +33,7 @@ eunit_files = \
     couchdb_update_conflicts_tests.erl \
     couch_auth_cache_tests.erl \
     couchdb_file_compression_tests.erl \
+    couch_config_tests.erl \
     test_request.erl \
     couchdb_tests.hrl
 
