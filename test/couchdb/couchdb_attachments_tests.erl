@@ -15,6 +15,11 @@
 -include_lib("../../src/couchdb/couch_db.hrl").
 -include_lib("couchdb_tests.hrl").
 
+-define(COMPRESSION_LEVEL, 8).
+-define(ATT_BIN_NAME, <<"logo.png">>).
+-define(ATT_TXT_NAME, <<"file.erl">>).
+-define(FIXTURE_PNG, filename:join([?FIXTURESDIR, "logo.png"])).
+-define(FIXTURE_TXT, ?FILE).
 -define(TIMEWAIT, 100).
 -define(i2l(I), integer_to_list(I)).
 
@@ -23,6 +28,10 @@ start() ->
     couch_server_sup:start_link(?CONFIG_CHAIN),
     % disable logging to reduce noise in stdout
     couch_config:set("log", "level", "none", false),
+    % ensure in default compression settings for attachments_compression_tests
+    couch_config:set("attachments", "compression_level",
+                     ?i2l(?COMPRESSION_LEVEL), false),
+    couch_config:set("attachments", "compressible_types", "text/*", false),
     ok.
 
 stop(_) ->
@@ -38,7 +47,35 @@ setup() ->
     Host = Addr ++ ":" ++ ?i2l(Port),
     {Host, ?b2l(DbName)}.
 
+setup({binary, standalone}) ->
+    {Host, DbName} = setup(),
+        setup_att(fun create_standalone_png_att/2, Host, DbName, ?FIXTURE_PNG);
+setup({text, standalone}) ->
+    {Host, DbName} = setup(),
+    setup_att(fun create_standalone_text_att/2, Host, DbName, ?FIXTURE_TXT);
+setup({binary, inline}) ->
+    {Host, DbName} = setup(),
+    setup_att(fun create_inline_png_att/2, Host, DbName, ?FIXTURE_PNG);
+setup({text, inline}) ->
+    {Host, DbName} = setup(),
+    setup_att(fun create_inline_text_att/2, Host, DbName, ?FIXTURE_TXT);
+setup(compressed) ->
+    {Host, DbName} = setup(),
+    setup_att(fun create_already_compressed_att/2, Host, DbName, ?FIXTURE_TXT).
+setup_att(Fun, Host, DbName, File) ->
+    HttpHost = "http://" ++ Host,
+    AttUrl = Fun(HttpHost, DbName),
+    {ok, Data} = file:read_file(File),
+    DocUrl = string:join([HttpHost, DbName, "doc"], "/"),
+    Helpers = {DbName, DocUrl, AttUrl},
+    {Data, Helpers}.
+
+teardown(_, {_, {DbName, _, _}}) ->
+    teardown(DbName).
+
 teardown({_, DbName}) ->
+    teardown(DbName);
+teardown(DbName) ->
     ok = couch_server:delete(?l2b(DbName), []),
     ok.
 
@@ -50,7 +87,8 @@ attachments_test_() ->
             setup,
             fun start/0, fun stop/1,
             [
-                attachments_md5_tests()
+                attachments_md5_tests(),
+                attachments_compression_tests()
             ]
         }
     }.
@@ -74,9 +112,70 @@ attachments_md5_tests() ->
         }
     }.
 
+attachments_compression_tests() ->
+    Funs = [
+         fun should_get_att_without_accept_gzip_encoding/2,
+         fun should_get_att_with_accept_gzip_encoding/2,
+         fun should_get_att_with_accept_deflate_encoding/2,
+         fun should_return_406_response_on_unsupported_encoding/2,
+         fun should_get_doc_with_att_data/2,
+         fun should_get_doc_with_att_data_stub/2
+    ],
+    {
+        "Attachments compression tests",
+        [
+            {
+                "Created via Attachments API",
+                created_attachments_compression_tests(standalone, Funs)
+            },
+            {
+                "Created inline via Document API",
+                created_attachments_compression_tests(inline, Funs)
+            },
+            {
+                "Created already been compressed via Attachments API",
+                {
+                    foreachx,
+                    fun setup/1, fun teardown/2,
+                    [{compressed, Fun} || Fun <- Funs]
+                }
+            },
+            {
+                foreach,
+                fun setup/0, fun teardown/1,
+                [
+                    fun should_not_create_compressed_att_with_deflate_encoding/1,
+                    fun should_not_create_compressed_att_with_compress_encoding/1,
+                    fun should_create_compressible_att_with_ctype_params/1
+                ]
+            }
+        ]
+    }.
+
+created_attachments_compression_tests(Mod, Funs) ->
+    [
+        {
+            "Compressiable attachments",
+            {
+                foreachx,
+                fun setup/1, fun teardown/2,
+                [{{text, Mod}, Fun} || Fun <- Funs]
+            }
+        },
+        {
+            "Uncompressiable attachments",
+            {
+                foreachx,
+                fun setup/1, fun teardown/2,
+                [{{binary, Mod}, Fun} || Fun <- Funs]
+            }
+        }
+    ].
+
+
 
 should_upload_attachment_without_md5({Host, DbName}) ->
-    ?_assert(
+    ?_test(
         begin
             AttUrl = string:join(["", DbName, ?docid(), "readme.txt"], "/"),
             Body = "We all live in a yellow submarine!",
@@ -87,12 +186,11 @@ should_upload_attachment_without_md5({Host, DbName}) ->
             ],
             {ok, Code, Json} = request("PUT", AttUrl, Headers, Body),
             ?assertEqual(201, Code),
-            ?assertEqual(true, get_json(Json, [<<"ok">>])),
-            true
+            ?assertEqual(true, get_json(Json, [<<"ok">>]))
         end).
 
 should_upload_attachment_by_chunks_without_md5({Host, DbName}) ->
-    ?_assert(
+    ?_test(
         begin
             AttUrl = string:join(["", DbName, ?docid(), "readme.txt"], "/"),
             AttData = <<"We all live in a yellow submarine!">>,
@@ -105,12 +203,11 @@ should_upload_attachment_by_chunks_without_md5({Host, DbName}) ->
             ],
             {ok, Code, Json} = request("PUT", AttUrl, Headers, Body),
             ?assertEqual(201, Code),
-            ?assertEqual(true, get_json(Json, [<<"ok">>])),
-            true
+            ?assertEqual(true, get_json(Json, [<<"ok">>]))
         end).
 
 should_upload_attachment_with_valid_md5_header({Host, DbName}) ->
-    ?_assert(
+    ?_test(
         begin
             AttUrl = string:join(["", DbName, ?docid(), "readme.txt"], "/"),
             Body = "We all live in a yellow submarine!",
@@ -122,12 +219,11 @@ should_upload_attachment_with_valid_md5_header({Host, DbName}) ->
             ],
             {ok, Code, Json} = request("PUT", AttUrl, Headers, Body),
             ?assertEqual(201, Code),
-            ?assertEqual(true, get_json(Json, [<<"ok">>])),
-            true
+            ?assertEqual(true, get_json(Json, [<<"ok">>]))
         end).
 
 should_upload_attachment_by_chunks_with_valid_md5_header({Host, DbName}) ->
-    ?_assert(
+    ?_test(
         begin
             AttUrl = string:join(["", DbName, ?docid(), "readme.txt"], "/"),
             AttData = <<"We all live in a yellow submarine!">>,
@@ -141,12 +237,11 @@ should_upload_attachment_by_chunks_with_valid_md5_header({Host, DbName}) ->
             ],
             {ok, Code, Json} = request("PUT", AttUrl, Headers, Body),
             ?assertEqual(201, Code),
-            ?assertEqual(true, get_json(Json, [<<"ok">>])),
-            true
+            ?assertEqual(true, get_json(Json, [<<"ok">>]))
         end).
 
 should_upload_attachment_by_chunks_with_valid_md5_trailer({Host, DbName}) ->
-    ?_assert(
+    ?_test(
         begin
             AttUrl = string:join(["", DbName, ?docid(), "readme.txt"], "/"),
             AttData = <<"We all live in a yellow submarine!">>,
@@ -162,12 +257,11 @@ should_upload_attachment_by_chunks_with_valid_md5_trailer({Host, DbName}) ->
             ],
             {ok, Code, Json} = request("PUT", AttUrl, Headers, Body),
             ?assertEqual(201, Code),
-            ?assertEqual(true, get_json(Json, [<<"ok">>])),
-            true
+            ?assertEqual(true, get_json(Json, [<<"ok">>]))
         end).
 
 should_reject_attachment_with_invalid_md5({Host, DbName}) ->
-    ?_assert(
+    ?_test(
         begin
             AttUrl = string:join(["", DbName, ?docid(), "readme.txt"], "/"),
             Body = "We all live in a yellow submarine!",
@@ -180,13 +274,12 @@ should_reject_attachment_with_invalid_md5({Host, DbName}) ->
             {ok, Code, Json} = request("PUT", AttUrl, Headers, Body),
             ?assertEqual(400, Code),
             ?assertEqual(<<"content_md5_mismatch">>,
-                         get_json(Json, [<<"error">>])),
-            true
+                         get_json(Json, [<<"error">>]))
         end).
 
 
 should_reject_chunked_attachment_with_invalid_md5({Host, DbName}) ->
-    ?_assert(
+    ?_test(
         begin
             AttUrl = string:join(["", DbName, ?docid(), "readme.txt"], "/"),
             AttData = <<"We all live in a yellow submarine!">>,
@@ -201,12 +294,11 @@ should_reject_chunked_attachment_with_invalid_md5({Host, DbName}) ->
             {ok, Code, Json} = request("PUT", AttUrl, Headers, Body),
             ?assertEqual(400, Code),
             ?assertEqual(<<"content_md5_mismatch">>,
-                         get_json(Json, [<<"error">>])),
-            true
+                         get_json(Json, [<<"error">>]))
         end).
 
 should_reject_chunked_attachment_with_invalid_md5_trailer({Host, DbName}) ->
-    ?_assert(
+    ?_test(
         begin
             AttUrl = string:join(["", DbName, ?docid(), "readme.txt"], "/"),
             AttData = <<"We all live in a yellow submarine!">>,
@@ -223,8 +315,228 @@ should_reject_chunked_attachment_with_invalid_md5_trailer({Host, DbName}) ->
             {ok, Code, Json} = request("PUT", AttUrl, Headers, Body),
             ?assertEqual(400, Code),
             ?assertEqual(<<"content_md5_mismatch">>,
-                         get_json(Json, [<<"error">>])),
-            true
+                         get_json(Json, [<<"error">>]))
+        end).
+
+should_get_att_without_accept_gzip_encoding(_, {Data, {_, _, AttUrl}}) ->
+    ?_test(
+        begin
+            {ok, Code, Headers, Body} = test_request:get(AttUrl),
+            ?assertEqual(200, Code),
+            ?assertNot(lists:member({"Content-Encoding", "gzip"}, Headers)),
+            ?assertEqual(Data, iolist_to_binary(Body))
+        end).
+
+should_get_att_with_accept_gzip_encoding(compressed, {Data, {_, _, AttUrl}}) ->
+    ?_test(
+        begin
+            {ok, Code, Headers, Body} = test_request:get(
+                AttUrl, [{"Accept-Encoding", "gzip"}]),
+            ?assertEqual(200, Code),
+            ?assert(lists:member({"Content-Encoding", "gzip"}, Headers)),
+            ?assertEqual(Data, zlib:gunzip(iolist_to_binary(Body)))
+        end);
+should_get_att_with_accept_gzip_encoding({text, _}, {Data, {_, _, AttUrl}}) ->
+    ?_test(
+        begin
+            {ok, Code, Headers, Body} = test_request:get(
+                AttUrl, [{"Accept-Encoding", "gzip"}]),
+            ?assertEqual(200, Code),
+            ?assert(lists:member({"Content-Encoding", "gzip"}, Headers)),
+            ?assertEqual(Data, zlib:gunzip(iolist_to_binary(Body)))
+        end);
+should_get_att_with_accept_gzip_encoding({binary, _}, {Data, {_, _, AttUrl}}) ->
+    ?_test(
+        begin
+            {ok, Code, Headers, Body} = test_request:get(
+                AttUrl, [{"Accept-Encoding", "gzip"}]),
+            ?assertEqual(200, Code),
+            ?assertEqual(undefined,
+                         couch_util:get_value("Content-Encoding", Headers)),
+            ?assertEqual(Data, iolist_to_binary(Body))
+        end).
+
+should_get_att_with_accept_deflate_encoding(_, {Data, {_, _, AttUrl}}) ->
+    ?_test(
+        begin
+            {ok, Code, Headers, Body} = test_request:get(
+                AttUrl, [{"Accept-Encoding", "deflate"}]),
+            ?assertEqual(200, Code),
+            ?assertEqual(undefined,
+                         couch_util:get_value("Content-Encoding", Headers)),
+            ?assertEqual(Data, iolist_to_binary(Body))
+        end).
+
+should_return_406_response_on_unsupported_encoding(_, {_, {_, _, AttUrl}}) ->
+    ?_assertEqual(406,
+        begin
+            {ok, Code, _, _} = test_request:get(
+                AttUrl, [{"Accept-Encoding", "deflate, *;q=0"}]),
+            Code
+        end).
+
+should_get_doc_with_att_data(compressed, {Data, {_, DocUrl, _}}) ->
+    ?_test(
+        begin
+            Url = DocUrl ++ "?attachments=true",
+            {ok, Code, _, Body} = test_request:get(
+                Url, [{"Accept", "application/json"}]),
+            ?assertEqual(200, Code),
+            Json = ejson:decode(Body),
+            AttJson = couch_util:get_nested_json_value(
+                Json, [<<"_attachments">>, ?ATT_TXT_NAME]),
+            AttData = couch_util:get_nested_json_value(
+                AttJson, [<<"data">>]),
+            ?assertEqual(
+                <<"text/plain">>,
+                couch_util:get_nested_json_value(AttJson,[<<"content_type">>])),
+            ?assertEqual(Data, base64:decode(AttData))
+        end);
+should_get_doc_with_att_data({text, _}, {Data, {_, DocUrl, _}}) ->
+    ?_test(
+        begin
+            Url = DocUrl ++ "?attachments=true",
+            {ok, Code, _, Body} = test_request:get(
+                Url, [{"Accept", "application/json"}]),
+            ?assertEqual(200, Code),
+            Json = ejson:decode(Body),
+            AttJson = couch_util:get_nested_json_value(
+                Json, [<<"_attachments">>, ?ATT_TXT_NAME]),
+            AttData = couch_util:get_nested_json_value(
+                AttJson, [<<"data">>]),
+            ?assertEqual(
+                <<"text/plain">>,
+                couch_util:get_nested_json_value(AttJson,[<<"content_type">>])),
+            ?assertEqual(Data, base64:decode(AttData))
+        end);
+should_get_doc_with_att_data({binary, _}, {Data, {_, DocUrl, _}}) ->
+    ?_test(
+        begin
+            Url = DocUrl ++ "?attachments=true",
+            {ok, Code, _, Body} = test_request:get(
+                Url, [{"Accept", "application/json"}]),
+            ?assertEqual(200, Code),
+            Json = ejson:decode(Body),
+            AttJson = couch_util:get_nested_json_value(
+                Json, [<<"_attachments">>, ?ATT_BIN_NAME]),
+            AttData = couch_util:get_nested_json_value(
+                AttJson, [<<"data">>]),
+            ?assertEqual(
+                <<"image/png">>,
+                couch_util:get_nested_json_value(AttJson,[<<"content_type">>])),
+            ?assertEqual(Data, base64:decode(AttData))
+        end).
+
+should_get_doc_with_att_data_stub(compressed, {Data, {_, DocUrl, _}}) ->
+    ?_test(
+        begin
+            Url = DocUrl ++ "?att_encoding_info=true",
+            {ok, Code, _, Body} = test_request:get(
+                Url, [{"Accept", "application/json"}]),
+            ?assertEqual(200, Code),
+            Json = ejson:decode(Body),
+            {AttJson} = couch_util:get_nested_json_value(
+                Json, [<<"_attachments">>, ?ATT_TXT_NAME]),
+            ?assertEqual(<<"gzip">>,
+                         couch_util:get_value(<<"encoding">>, AttJson)),
+            AttLength = couch_util:get_value(<<"length">>, AttJson),
+            EncLength = couch_util:get_value(<<"encoded_length">>, AttJson),
+            ?assertEqual(AttLength, EncLength),
+            ?assertEqual(iolist_size(zlib:gzip(Data)), AttLength)
+        end);
+should_get_doc_with_att_data_stub({text, _}, {Data, {_, DocUrl, _}}) ->
+    ?_test(
+        begin
+            Url = DocUrl ++ "?att_encoding_info=true",
+            {ok, Code, _, Body} = test_request:get(
+                Url, [{"Accept", "application/json"}]),
+            ?assertEqual(200, Code),
+            Json = ejson:decode(Body),
+            {AttJson} = couch_util:get_nested_json_value(
+                Json, [<<"_attachments">>, ?ATT_TXT_NAME]),
+            ?assertEqual(<<"gzip">>,
+                         couch_util:get_value(<<"encoding">>, AttJson)),
+            AttEncLength = iolist_size(gzip(Data)),
+            ?assertEqual(AttEncLength,
+                         couch_util:get_value(<<"encoded_length">>, AttJson)),
+            ?assertEqual(byte_size(Data),
+                         couch_util:get_value(<<"length">>, AttJson))
+        end);
+should_get_doc_with_att_data_stub({binary, _}, {Data, {_, DocUrl, _}}) ->
+    ?_test(
+        begin
+            Url = DocUrl ++ "?att_encoding_info=true",
+            {ok, Code, _, Body} = test_request:get(
+                Url, [{"Accept", "application/json"}]),
+            ?assertEqual(200, Code),
+            Json = ejson:decode(Body),
+            {AttJson} = couch_util:get_nested_json_value(
+                Json, [<<"_attachments">>, ?ATT_BIN_NAME]),
+            ?assertEqual(undefined,
+                         couch_util:get_value(<<"encoding">>, AttJson)),
+            ?assertEqual(undefined,
+                         couch_util:get_value(<<"encoded_length">>, AttJson)),
+            ?assertEqual(byte_size(Data),
+                         couch_util:get_value(<<"length">>, AttJson))
+        end).
+
+should_not_create_compressed_att_with_deflate_encoding({Host, DbName}) ->
+    ?_assertEqual(415,
+        begin
+            HttpHost = "http://" ++ Host,
+            AttUrl = string:join([HttpHost, DbName, ?docid(), "file.txt"], "/"),
+            {ok, Data} = file:read_file(?FIXTURE_TXT),
+            Body = zlib:compress(Data),
+            Headers = [
+                {"Content-Encoding", "deflate"},
+                {"Content-Type", "text/plain"}
+            ],
+            {ok, Code, _, _} = test_request:put(AttUrl, Headers, Body),
+            Code
+        end).
+
+should_not_create_compressed_att_with_compress_encoding({Host, DbName}) ->
+    % Note: As of OTP R13B04, it seems there's no LZW compression
+    % (i.e. UNIX compress utility implementation) lib in OTP.
+    % However there's a simple working Erlang implementation at:
+    % http://scienceblogs.com/goodmath/2008/01/simple_lempelziv_compression_i.php
+    ?_assertEqual(415,
+        begin
+            HttpHost = "http://" ++ Host,
+            AttUrl = string:join([HttpHost, DbName, ?docid(), "file.txt"], "/"),
+            {ok, Data} = file:read_file(?FIXTURE_TXT),
+            Headers = [
+                {"Content-Encoding", "compress"},
+                {"Content-Type", "text/plain"}
+            ],
+            {ok, Code, _, _} = test_request:put(AttUrl, Headers, Data),
+            Code
+        end).
+
+should_create_compressible_att_with_ctype_params({Host, DbName}) ->
+    ?_test(
+        begin
+            HttpHost = "http://" ++ Host,
+            DocUrl = string:join([HttpHost, DbName, ?docid()], "/"),
+            AttUrl = string:join([DocUrl, ?b2l(?ATT_TXT_NAME)], "/"),
+            {ok, Data} = file:read_file(?FIXTURE_TXT),
+            Headers = [{"Content-Type", "text/plain; charset=UTF-8"}],
+            {ok, Code0, _, _} = test_request:put(AttUrl, Headers, Data),
+            ?assertEqual(201, Code0),
+
+            {ok, Code1, _, Body} = test_request:get(
+                DocUrl ++ "?att_encoding_info=true"),
+            ?assertEqual(200, Code1),
+            Json = ejson:decode(Body),
+            {AttJson} = couch_util:get_nested_json_value(
+                Json, [<<"_attachments">>, ?ATT_TXT_NAME]),
+            ?assertEqual(<<"gzip">>,
+                         couch_util:get_value(<<"encoding">>, AttJson)),
+            AttEncLength = iolist_size(gzip(Data)),
+            ?assertEqual(AttEncLength,
+                         couch_util:get_value(<<"encoded_length">>, AttJson)),
+            ?assertEqual(byte_size(Data),
+                         couch_util:get_value(<<"length">>, AttJson))
         end).
 
 
@@ -274,5 +586,68 @@ request(Method, Url, Headers, Body) ->
     Json = ejson:decode(Body1),
     {ok, Code, Json}.
 
+create_standalone_text_att(Host, DbName) ->
+    {ok, Data} = file:read_file(?FIXTURE_TXT),
+    Url = string:join([Host, DbName, "doc", ?b2l(?ATT_TXT_NAME)], "/"),
+    {ok, Code, _Headers, _Body} = test_request:put(
+        Url, [{"Content-Type", "text/plain"}], Data),
+    ?assertEqual(201, Code),
+    Url.
 
+create_standalone_png_att(Host, DbName) ->
+    {ok, Data} = file:read_file(?FIXTURE_PNG),
+    Url = string:join([Host, DbName, "doc", ?b2l(?ATT_BIN_NAME)], "/"),
+    {ok, Code, _Headers, _Body} = test_request:put(
+        Url, [{"Content-Type", "image/png"}], Data),
+    ?assertEqual(201, Code),
+    Url.
 
+create_inline_text_att(Host, DbName) ->
+    {ok, Data} = file:read_file(?FIXTURE_TXT),
+    Url = string:join([Host, DbName, "doc"], "/"),
+    Doc = {[
+        {<<"_attachments">>, {[
+            {?ATT_TXT_NAME, {[
+                {<<"content_type">>, <<"text/plain">>},
+                {<<"data">>, base64:encode(Data)}
+            ]}
+        }]}}
+    ]},
+    {ok, Code, _Headers, _Body} = test_request:put(
+        Url, [{"Content-Type", "application/json"}], ejson:encode(Doc)),
+    ?assertEqual(201, Code),
+    string:join([Url, ?b2l(?ATT_TXT_NAME)], "/").
+
+create_inline_png_att(Host, DbName) ->
+    {ok, Data} = file:read_file(?FIXTURE_PNG),
+    Url = string:join([Host, DbName, "doc"], "/"),
+    Doc = {[
+        {<<"_attachments">>, {[
+            {?ATT_BIN_NAME, {[
+                {<<"content_type">>, <<"image/png">>},
+                {<<"data">>, base64:encode(Data)}
+            ]}
+        }]}}
+    ]},
+    {ok, Code, _Headers, _Body} = test_request:put(
+        Url, [{"Content-Type", "application/json"}], ejson:encode(Doc)),
+    ?assertEqual(201, Code),
+    string:join([Url, ?b2l(?ATT_BIN_NAME)], "/").
+
+create_already_compressed_att(Host, DbName) ->
+    {ok, Data} = file:read_file(?FIXTURE_TXT),
+    Url = string:join([Host, DbName, "doc", ?b2l(?ATT_TXT_NAME)], "/"),
+    {ok, Code, _Headers, _Body} = test_request:put(
+        Url, [{"Content-Type", "text/plain"}, {"Content-Encoding", "gzip"}],
+        zlib:gzip(Data)),
+    ?assertEqual(201, Code),
+    Url.
+
+gzip(Data) ->
+    Z = zlib:open(),
+    ok = zlib:deflateInit(Z, ?COMPRESSION_LEVEL, deflated, 16 + 15, 8, default),
+    zlib:deflate(Z, Data),
+    Last = zlib:deflate(Z, [], finish),
+    ok = zlib:deflateEnd(Z),
+    ok = zlib:close(Z),
+    Last.
