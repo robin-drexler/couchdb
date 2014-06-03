@@ -39,6 +39,7 @@ eunit_files = \
     couch_stats_tests.erl \
     couchdb_attachments_tests.erl \
     couchdb_vhosts_tests.erl \
+    couchdb_os_daemons_tests.erl \
     test_request.erl \
     couchdb_tests.hrl
 
@@ -47,6 +48,7 @@ fixture_files = \
     fixtures/couch_config_tests_2.ini \
     fixtures/couch_stats_aggregates.cfg \
     fixtures/couch_stats_aggregates.ini \
+    fixtures/os_daemon_looper.escript \
     fixtures/logo.png
 
 EXTRA_DIST = \
