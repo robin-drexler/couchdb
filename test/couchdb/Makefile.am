@@ -38,6 +38,7 @@ eunit_files = \
     couch_ref_counter_tests.erl \
     couch_stats_tests.erl \
     couchdb_attachments_tests.erl \
+    couchdb_vhosts_tests.erl \
     test_request.erl \
     couchdb_tests.hrl
 
