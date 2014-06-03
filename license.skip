@@ -171,6 +171,10 @@
 ^test/couchdb/Makefile
 ^test/couchdb/Makefile.in
 ^test/couchdb/fixtures/logo.png
+^test/couchdb/fixtures/Makefile
+^test/couchdb/fixtures/Makefile.in
+^test/couchdb/fixtures/test_cfg_register
+^test/couchdb/fixtures/test_cfg_register.o
 ^test/etap/.*.beam
 ^test/etap/.*.o
 ^test/etap/.deps/.*
